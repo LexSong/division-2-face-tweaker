@@ -6,6 +6,7 @@ requires-python = ">=3.14"
 dependencies = [
   "mediapipe>=1.1.1",
   "numpy>=2.5.4",
+  "onnxruntime-gpu[cuda,cudnn]>=1.31.0",
   "opencv-contrib-python>=5.0.0.93",
 ]
 
@@ -22,3 +23,8 @@ line-length = 120
 
 [tool.ruff.lint.isort]
 force-single-line = true
+
+# The NVIDIA library wheels behind onnxruntime-gpu's cuda extra do not all ship
+# for Windows, so the lock must pick versions that do.
+[tool.uv]
+required-environments = ["sys_platform == 'win32' and platform_machine == 'AMD64'"]
