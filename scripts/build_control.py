@@ -15,15 +15,21 @@ Per head this stores:
   remove axes or weight them down.
 - noise: spread of the average of one half of the clip, about one loop.
 
-Usage: uv run scripts/build_control.py <control_features_dir> <out.npz>
-The feature files come from extract_features.py, named HeadNN after the head.
+Every clip in a head's feature folder whose sliders stay at 6 in all read
+frames counts as control data for that head, and their frames are pooled.
+
+Usage: uv run scripts/build_control.py <features_dir> <out.npz>
+The feature folders come from extract_features.py.
 """
 
-import re
 import sys
 from pathlib import Path
 
 import numpy as np
+
+from face_tweaker.layout import head_folders
+
+BASE_VALUE = 6
 
 # Frames turned more than this from the median yaw of all control clips are
 # left out. The idle loop turns to about -40 degrees, and dropping those turns
@@ -34,21 +40,31 @@ YAW_LIMIT = 25.0
 DIRECTIONS = 60
 
 
-def load(folder: Path) -> dict:
+def load(features: Path) -> dict:
+    """Pooled frames of each head's control clips, keyed by head number."""
     clips = {}
-    for path in sorted(folder.glob("*.npz")):
-        match = re.match(r"[Hh]ead(\d+)", path.name)
-        if match is None:
-            raise ValueError(f"{path.name}: name does not start with HeadNN")
-        d = np.load(path)
-        keep = d["ok"] & d["face"]
-        clips[int(match.group(1))] = {"arcface": d["arcface"][keep].astype(np.float64), "yaw": d["yaw"][keep]}
+    for head, folder in head_folders(features):
+        arcface = []
+        yaw = []
+        names = []
+        for path in sorted(folder.glob("*.npz")):
+            d = np.load(path)
+            keep = d["ok"] & d["face"]
+            if not (d["sliders"][keep] == BASE_VALUE).all():
+                continue
+            arcface.append(d["arcface"][keep].astype(np.float64))
+            yaw.append(d["yaw"][keep])
+            names.append(path.stem)
+        if names:
+            clips[head] = {"arcface": np.concatenate(arcface), "yaw": np.concatenate(yaw), "clips": names}
     return clips
 
 
 def main():
     clips = load(Path(sys.argv[1]))
     heads = sorted(clips)
+    for h in heads:
+        print(f"head {h:2d}: {len(clips[h]['clips'])} control clip(s), {len(clips[h]['yaw'])} frames")
     yaw_center = float(np.median(np.concatenate([clips[h]["yaw"] for h in heads])))
 
     means = []

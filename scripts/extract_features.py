@@ -1,18 +1,22 @@
-"""Measure every frame of each clip and cache the results.
+"""Measure every frame of each new clip and cache the results.
 
 Per frame this stores the slider values read from the panel, the ArcFace
 embedding, and the head yaw and pitch from MediaPipe. Later steps then run on
 these files in seconds instead of decoding video.
 
-A clip where the slider panel scrolls is rejected and gets no file, because
-its rows are then not the first 9 sliders.
+Clips live in head folders (see face_tweaker.layout). Only clips without a
+cache file are extracted, so earlier extractions are reused. A clip where the
+slider panel scrolls is rejected and gets no file, because its rows are then
+not the first 9 sliders, so it is reported again on every run until removed.
 
-Usage: uv run scripts/extract_features.py <out_dir> <video>...
-Writes <out_dir>/<video name>.npz per accepted video.
+Usage: uv run scripts/extract_features.py <recordings_dir> <features_dir>
+Writes <features_dir>/HeadNN/<clip name>.npz per accepted clip.
 """
 
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import as_completed
 from pathlib import Path
 
 import cv2
@@ -23,10 +27,16 @@ from face_tweaker.division2_sliders import PanelScrolledError
 from face_tweaker.division2_sliders import read_sliders
 from face_tweaker.face_features import ArcFace
 from face_tweaker.face_features import Landmarks
+from face_tweaker.layout import head_folders
+
+# Clips extracted at once. One process takes about 30 ms per frame, and four in
+# parallel take about 43 ms each, so four give about 2.8 times the throughput.
+WORKERS = 4
 
 
-def extract(video: Path, out: Path) -> None:
-    """Write the per-frame file. Raises PanelScrolledError if the panel scrolls."""
+def extract(video: Path, out: Path) -> str:
+    """Write the per-frame file and return a summary line. Raises
+    PanelScrolledError if the panel scrolls."""
     landmarks = Landmarks()
     arcface = ArcFace()
     cap = cv2.VideoCapture(str(video))
@@ -81,22 +91,39 @@ def extract(video: Path, out: Path) -> None:
     arrays = {key: np.array(value) for key, value in rows.items()}
     np.savez(out, fps=fps, slider_names=np.array(SLIDER_NAMES), **arrays)
     seconds = time.perf_counter() - start
-    print(
-        f"{video.name}: {frame_no} frames, {1000 * seconds / frame_no:.1f} ms per frame, face in {arrays['face'].sum()}"
-    )
+    return f"{frame_no} frames, {1000 * seconds / frame_no:.1f} ms per frame, face in {arrays['face'].sum()}"
 
 
 def main():
-    out_dir = Path(sys.argv[1])
-    out_dir.mkdir(parents=True, exist_ok=True)
+    recordings = Path(sys.argv[1])
+    features = Path(sys.argv[2])
+    loose = list(recordings.glob("*.mp4"))
+    if loose:
+        print(f"{len(loose)} clips sit outside a head folder and are skipped")
+
+    jobs = []
+    cached = 0
+    for _, folder in head_folders(recordings):
+        for video in sorted(folder.glob("*.mp4")):
+            out = features / folder.name / (video.stem + ".npz")
+            if out.exists():
+                cached += 1
+                continue
+            out.parent.mkdir(parents=True, exist_ok=True)
+            jobs.append((video, out))
+    print(f"{len(jobs)} clips to extract, {cached} already cached")
+
     rejected = 0
-    for name in sys.argv[2:]:
-        video = Path(name)
-        try:
-            extract(video, out_dir / (video.stem + ".npz"))
-        except PanelScrolledError as e:
-            print(f"{video.name}: rejected: {e}")
-            rejected += 1
+    with ProcessPoolExecutor(max_workers=WORKERS) as pool:
+        futures = {pool.submit(extract, video, out): video for video, out in jobs}
+        for future in as_completed(futures):
+            video = futures[future]
+            label = f"{video.parent.name}/{video.name}"
+            try:
+                print(f"{label}: {future.result()}")
+            except PanelScrolledError as e:
+                print(f"{label}: rejected: {e}")
+                rejected += 1
     if rejected:
         sys.exit(1)
 
