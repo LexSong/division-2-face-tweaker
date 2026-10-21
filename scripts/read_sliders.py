@@ -1,16 +1,24 @@
 """Print each run of frames that share the same slider values.
 
+A clip where the panel scrolls is rejected, because its rows are then not
+the first 9 sliders.
+
 Usage: uv run scripts/read_sliders.py <video>
 """
 
 import sys
 
 from face_tweaker.division2_sliders import SLIDER_NAMES
+from face_tweaker.division2_sliders import PanelScrolledError
 from face_tweaker.division2_sliders import read_video
 
 
 def main():
-    readings = read_video(sys.argv[1])
+    try:
+        readings = read_video(sys.argv[1])
+    except PanelScrolledError as e:
+        print(f"rejected: {e}")
+        sys.exit(1)
     print(f"{len(readings)} frames")
     print("Runs of frames with the same values. Columns are the sliders, top to bottom:")
     print("  " + ", ".join(SLIDER_NAMES))

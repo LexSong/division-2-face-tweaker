@@ -75,8 +75,10 @@ KNOB_COLOR = {
 ORANGE_BAR_COLOR = ((0, 91, 201), (79, 169, 255))
 
 # Scrollbar thumb area. When the panel scrolls, the thumb leaves this box and
-# the corners above no longer apply.
+# the corners above no longer apply. In place, the box averages 236-237
+# brightness on every clip so far. Scrolled by one row, it drops to 37.
 SCROLL_THUMB = (1139, 1147, 250, 478)  # x0, x1, y0, y1
+THUMB_MIN_BRIGHTNESS = 200
 
 # Samples along each axis line, in tick units. They reach half a tick past
 # both ends, so a knob at 0 or 12 lies fully inside. 700 samples over about
@@ -93,7 +95,7 @@ MAX_RESIDUAL_PX = 6.0
 
 
 class PanelScrolledError(Exception):
-    pass
+    """The panel has scrolled, so a clip with this frame must be rejected."""
 
 
 def _grid_to_pixel(state: str, t: np.ndarray, row: float) -> np.ndarray:
@@ -142,12 +144,17 @@ def _samples(frame_bgr: np.ndarray, state: str, row: int) -> np.ndarray:
     return frame_bgr[xy[:, 1], xy[:, 0]]
 
 
+def panel_in_place(frame_bgr: np.ndarray) -> bool:
+    """True while the panel shows its first 9 sliders, where the corners apply."""
+    x0, x1, y0, y1 = SCROLL_THUMB
+    return frame_bgr[y0:y1, x0:x1].mean() >= THUMB_MIN_BRIGHTNESS
+
+
 def read_sliders(frame_bgr: np.ndarray) -> Reading:
     if frame_bgr.shape[:2] != FRAME_SIZE:
         raise ValueError(f"frame is {frame_bgr.shape[:2]}, corners are for {FRAME_SIZE}")
-    sx0, sx1, sy0, sy1 = SCROLL_THUMB
-    if frame_bgr[sy0:sy1, sx0:sx1].mean() < 200:
-        raise PanelScrolledError("scrollbar thumb moved, corners do not apply")
+    if not panel_in_place(frame_bgr):
+        raise PanelScrolledError("panel scrolled, so the rows are not the first 9 sliders")
 
     values: list[int | None] = [None] * len(SLIDER_NAMES)
     residual = 0.0
@@ -182,13 +189,19 @@ def read_sliders(frame_bgr: np.ndarray) -> Reading:
 
 
 def read_video(path: str) -> list:
-    """One Reading per frame."""
+    """One Reading per frame. Raises PanelScrolledError naming the first
+    scrolled frame."""
     cap = cv2.VideoCapture(path)
     readings = []
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        readings.append(read_sliders(frame))
-    cap.release()
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            try:
+                readings.append(read_sliders(frame))
+            except PanelScrolledError as e:
+                raise PanelScrolledError(f"frame {len(readings)}: {e}") from e
+    finally:
+        cap.release()
     return readings
