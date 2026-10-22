@@ -20,7 +20,8 @@ import numpy as np
 from face_tweaker.division2_sliders import GRID_CORNERS
 from face_tweaker.division2_sliders import KNOB_COLOR
 from face_tweaker.division2_sliders import ORANGE_BAR_COLOR
-from face_tweaker.division2_sliders import TICKS
+from face_tweaker.division2_sliders import SLIDER_MAX
+from face_tweaker.division2_sliders import SLIDER_MIN
 
 # Area searched for knobs and ticks. The scrollbar starts at x 1137.
 PANEL = (640, 1134, 230, 1190)  # x0, x1, y0, y1
@@ -151,7 +152,7 @@ def collect(videos: list) -> dict:
                 if abs(ROW_Y[row] - ky) > 20:
                     continue
                 ticks = find_ticks(gray, kx, ky)
-                if len(ticks) != TICKS:
+                if len(ticks) != SLIDER_MAX - SLIDER_MIN + 1:
                     print(f"skipped {state} row {row}: found {len(ticks)} ticks")
                     continue
                 for t, (x, y) in enumerate(ticks):

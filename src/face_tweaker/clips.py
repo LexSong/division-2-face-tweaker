@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-BASE_VALUE = 6
+from face_tweaker.division2_sliders import SLIDER_CENTER
 
 # Frames with MediaPipe yaw beyond this are left out. Within about 10 degrees
 # of the resting pose ArcFace barely moves, but past -20 degrees it drifts
@@ -66,7 +66,7 @@ def load_feature_folder(folder: Path) -> list:
 
 def control_frames(samples: list) -> np.ndarray:
     """ArcFace of the samples with every slider at 6, pooled."""
-    frames = [s.arcface for s in samples if (s.sliders == BASE_VALUE).all()]
+    frames = [s.arcface for s in samples if (s.sliders == SLIDER_CENTER).all()]
     if not frames:
         raise ValueError("no control clip")
     return np.concatenate(frames)

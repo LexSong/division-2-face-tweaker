@@ -39,15 +39,18 @@ SLIDER_NAMES = [
     "Cheeks",
 ]
 
-TICKS = 13
+# A slider's value is its tick, from 0 to 12.
+SLIDER_MIN = 0
+SLIDER_MAX = 12
+SLIDER_CENTER = (SLIDER_MIN + SLIDER_MAX) // 2
 
 # Grid coordinates (tick, row) of the four corners.
 GRID_CORNERS = np.array(
     [
-        [0, 0],
-        [TICKS - 1, 0],
-        [0, len(SLIDER_NAMES) - 1],
-        [TICKS - 1, len(SLIDER_NAMES) - 1],
+        [SLIDER_MIN, 0],
+        [SLIDER_MAX, 0],
+        [SLIDER_MIN, len(SLIDER_NAMES) - 1],
+        [SLIDER_MAX, len(SLIDER_NAMES) - 1],
     ],
     dtype=np.float32,
 )
@@ -181,7 +184,7 @@ THUMB_MIN_BRIGHTNESS = 200
 # Samples along each axis line, in tick units. They reach half a tick past
 # both ends, so a knob at 0 or 12 lies fully inside. The line is about 450 px
 # long at height 1566 and 620 px at 2160, so 700 samples stay under 1 px apart.
-SAMPLE_T = np.linspace(-0.5, TICKS - 0.5, 700)
+SAMPLE_T = np.linspace(SLIDER_MIN - 0.5, SLIDER_MAX + 0.5, 700)
 
 # A knob covers about 0.23 tick. Runs of knob color outside this width are not
 # a knob.
@@ -249,7 +252,7 @@ def read_sliders(frame_bgr: np.ndarray) -> Reading:
 
         s, e = knob_runs[0]
         t = SAMPLE_T[s:e].mean()
-        v = int(np.clip(round(t), 0, TICKS - 1))
+        v = int(np.clip(round(t), SLIDER_MIN, SLIDER_MAX))
         values[row] = v
         residual = max(residual, abs(t - v))
     return Reading(values, selected, residual)

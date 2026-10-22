@@ -26,16 +26,12 @@ import numpy as np
 
 from face_tweaker.clips import control_frames
 from face_tweaker.clips import load_feature_folder
+from face_tweaker.division2_sliders import SLIDER_CENTER
+from face_tweaker.division2_sliders import SLIDER_MAX
+from face_tweaker.division2_sliders import SLIDER_MIN
 from face_tweaker.division2_sliders import SLIDER_NAMES
 from face_tweaker.face_features import ArcFace
 from face_tweaker.face_features import Landmarks
-
-SLIDER_MIN = 0
-SLIDER_MAX = 12
-
-# The model's offsets, the search's start and the printed labels count from
-# the middle of the slider range.
-CENTER = (SLIDER_MIN + SLIDER_MAX) // 2
 
 # Animation axes removed from every vector before comparing. A head's first 30
 # axes hold about 87% of its animation, and removing more risks removing what
@@ -72,7 +68,7 @@ def animation_directions(frames: np.ndarray, count: int) -> np.ndarray:
 def design(values: np.ndarray, curved: np.ndarray) -> np.ndarray:
     """Model inputs per row of slider values: 1, the offsets from 6, and the
     squared offsets of the sliders with a curvature term."""
-    offset = values - CENTER
+    offset = values - SLIDER_CENTER
     return np.concatenate([np.ones((len(values), 1)), offset, offset[:, curved] ** 2], axis=1)
 
 
@@ -98,7 +94,7 @@ def main():
     print(f"{len(samples)} clips for head {head}, {len(photos)} target photo(s)")
     print("Measured similarity to the target, per clip:")
     for c, m in zip(samples, means, strict=True):
-        moved = [f"{SLIDER_NAMES[s]} {v}" for s, v in enumerate(c.sliders) if v != CENTER]
+        moved = [f"{SLIDER_NAMES[s]} {v}" for s, v in enumerate(c.sliders) if v != SLIDER_CENTER]
         label = ", ".join(moved)
         if not label:
             label = "all at 6"
@@ -116,7 +112,7 @@ def main():
 
     # Coordinate ascent over whole-number values: set one slider at a time to
     # its best value, until no slider changes.
-    best = np.full(values.shape[1], CENTER)
+    best = np.full(values.shape[1], SLIDER_CENTER)
     best_score = cosine(predict(best), target)
     changed = True
     while changed:
@@ -131,7 +127,7 @@ def main():
                     best_score = score
                     changed = True
 
-    base_score = cosine(predict(np.full(values.shape[1], CENTER)), target)
+    base_score = cosine(predict(np.full(values.shape[1], SLIDER_CENTER)), target)
     print()
     low = values.min(axis=0)
     high = values.max(axis=0)
