@@ -2,10 +2,10 @@
 
 All clips in the head's feature folder are data points: the control clip with
 every slider at 6, and clips with sliders moved. Each clip gives one point,
-its ArcFace average over frames near the usual head angle. A local model then
-predicts ArcFace from the sliders. Per slider it has a slope, plus a
-curvature where that slider was recorded on both sides of 6, and the sliders
-are assumed to add up.
+its ArcFace average over good frames (see face_tweaker.clips). A local
+model then predicts ArcFace from the sliders. Per slider it has a slope, plus
+a curvature where that slider was recorded on both sides of 6, and the
+sliders are assumed to add up.
 
 The suggestion maximizes the cosine similarity between the predicted ArcFace
 and the target's, over each slider's full 0-12 range. Beyond the values
@@ -13,7 +13,9 @@ recorded for a slider, the model extrapolates, so those suggestions are
 marked. Record the suggestion as a new clip in the same head folder: the next
 run fits it in, which measures the model exactly where it was guessing.
 
-Usage: uv run scripts/fit_sliders.py <features_dir> <control.npz> <head> <photo>...
+The head needs a control clip (see face_tweaker.clips).
+
+Usage: uv run scripts/fit_sliders.py <features_dir> <head> <photo>...
 """
 
 import sys
@@ -22,6 +24,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from face_tweaker.clips import control_frames
+from face_tweaker.clips import load_feature_folder
 from face_tweaker.division2_sliders import SLIDER_NAMES
 from face_tweaker.face_features import ArcFace
 from face_tweaker.face_features import Landmarks
@@ -53,19 +57,13 @@ def target_vector(photos: list) -> np.ndarray:
     return np.mean(vectors, axis=0)
 
 
-def clip_points(folder: Path, yaw_center: float, yaw_limit: float) -> list:
-    """(name, slider values, ArcFace average) for each clip whose sliders
-    stay constant."""
-    points = []
-    for path in sorted(folder.glob("*.npz")):
-        d = np.load(path)
-        good = d["ok"] & d["face"] & (np.abs(d["yaw"] - yaw_center) <= yaw_limit)
-        values = np.unique(d["sliders"][good], axis=0)
-        if len(values) != 1:
-            print(f"skipped {path.stem}: its sliders change during the clip")
-            continue
-        points.append((path.stem, values[0], d["arcface"][good].astype(np.float64).mean(0)))
-    return points
+def animation_directions(frames: np.ndarray, count: int) -> np.ndarray:
+    """The main axes of the animation's spread in ArcFace, as rows, from a PCA
+    of one head's control frames. The animation is the same for every head,
+    but these axes are not: a head's own 60 axes capture 92% of its animation,
+    while 60 axes from the other heads capture 46%."""
+    _, _, vt = np.linalg.svd(frames - frames.mean(0), full_matrices=False)
+    return vt[:count]
 
 
 def design(values: np.ndarray, curved: np.ndarray) -> np.ndarray:
@@ -81,36 +79,27 @@ def cosine(a: np.ndarray, b: np.ndarray) -> float:
 
 def main():
     features = Path(sys.argv[1])
-    control = np.load(sys.argv[2])
-    head = int(sys.argv[3])
-    photos = sys.argv[4:]
+    head = int(sys.argv[2])
+    photos = sys.argv[3:]
 
-    heads = list(control["heads"])
-    i = heads.index(head)
-    directions = control["directions"][i][:CLEAN_DIRECTIONS]
+    samples = load_feature_folder(features / f"Head{head:02d}")
+    directions = animation_directions(control_frames(samples), CLEAN_DIRECTIONS)
 
     def clean(x):
         return x - (x @ directions.T) @ directions
 
-    points = clip_points(features / f"Head{head:02d}", float(control["yaw_center"]), float(control["yaw_limit"]))
     target = clean(target_vector(photos))
-    values = np.array([v for _, v, _ in points])
-    means = np.array([clean(m) for _, _, m in points])
+    values = np.array([c.sliders for c in samples])
+    means = np.array([clean(c.arcface.mean(0)) for c in samples])
 
-    # Every clip should match its own head's control best.
-    control_means = np.array([clean(m) for m in control["mean"]])
-    print(f"{len(points)} clips for head {head}, {len(photos)} target photo(s)")
+    print(f"{len(samples)} clips for head {head}, {len(photos)} target photo(s)")
     print("Measured similarity to the target, per clip:")
-    for (name, v, _), m in zip(points, means, strict=True):
-        nearest = heads[int(np.argmin(np.linalg.norm(control_means - m, axis=1)))]
-        moved = [f"{SLIDER_NAMES[s]} {v[s]}" for s in range(len(v)) if v[s] != BASE_VALUE]
+    for c, m in zip(samples, means, strict=True):
+        moved = [f"{SLIDER_NAMES[s]} {v}" for s, v in enumerate(c.sliders) if v != BASE_VALUE]
         label = ", ".join(moved)
         if not label:
             label = "all at 6"
-        warning = ""
-        if nearest != head:
-            warning = f"   WARNING: looks more like head {nearest}"
-        print(f"  {cosine(m, target):+.3f}  {label:<20} {name[-11:]}{warning}")
+        print(f"  {cosine(m, target):+.3f}  {label:<20} {c.feature_file.stem[-11:]}")
 
     # A curvature term needs the slider recorded on both sides of 6.
     curved = np.array(
