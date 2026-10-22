@@ -26,8 +26,7 @@ Propose only offline analysis of recordings. The user records with the NVIDIA ap
 1. Control clip: all 9 sliders at 6, ~35 s.
 2. Sweep: each slider at 0 and at 12, the rest at 6, ~20 s each. That is 18 clips.
 3. Run, in order:
-   - `uv run scripts/check_clips.py <recordings> data/features`
-   - `uv run scripts/extract_features.py <recordings> data/features`
+   - `uv run scripts/extract_features.py <recordings> data/features` (it checks the new clips first)
    - `uv run scripts/fit_sliders.py data/features <head> data/images/*`
 4. Record the suggestion as one clip in the same head folder, then refit. Repeat until the suggestion stops changing.
 

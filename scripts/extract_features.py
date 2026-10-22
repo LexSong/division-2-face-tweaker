@@ -1,16 +1,28 @@
-"""Measure every frame of each new clip and cache the results.
+"""Check each new clip, then measure every frame of the clips that pass and
+cache the results.
 
 Per frame this stores the slider values read from the panel, the ArcFace
 embedding, and the head yaw and pitch from MediaPipe. Later steps then run on
 these files in seconds instead of decoding video.
 
-Clips live in head folders (see face_tweaker.layout). Only clips without a
-cache file are extracted, so earlier extractions are reused. A clip where the
-slider panel scrolls is rejected and gets no file, because its rows are then
-not the first 9 sliders, so it is reported again on every run until removed.
+Clips live in head folders (see face_tweaker.layout). A new clip is one
+without a cache file, or one sitting outside a head folder. Earlier
+extractions are reused.
+
+The check comes first and reads three frames per clip, so it reports in
+seconds, before minutes of extraction. It prints each clip's length and the
+slider values half a second after the start, in the middle, and half a second
+before the end. A clip passes only if all three agree, because the sliders
+must not move while recording. A clip that fails is skipped and gets no file,
+so it is reported again on every run until fixed or removed.
+
+A clip where the slider panel scrolls is rejected, because its rows are then
+not the first 9 sliders. The check catches this if it shows in one of its
+three frames, and extraction catches it in any other frame.
 
 Usage: uv run scripts/extract_features.py <recordings_dir> <features_dir>
 Writes <features_dir>/HeadNN/<clip name>.npz per accepted clip.
+Exits with code 1 if any clip has a problem.
 """
 
 import sys
@@ -32,6 +44,68 @@ from face_tweaker.layout import head_folders
 # Clips extracted at once. One process takes about 30 ms per frame, and four in
 # parallel take about 43 ms each, so four give about 2.8 times the throughput.
 WORKERS = 4
+
+# Checks sit this many frames in from each end, half a second at 60 fps, so
+# the press that starts or stops the recording does not show.
+EDGE_FRAMES = 30
+
+# A clip should cover at least one idle loop, which lasts about 17.6 s.
+MIN_SECONDS = 17.0
+
+
+def sliders_at(cap: cv2.VideoCapture, frame_no: int) -> str:
+    """The slider values in one frame, or the reason they cannot be read."""
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_no)
+    ok, frame = cap.read()
+    if not ok:
+        return "unreadable frame"
+    try:
+        reading = read_sliders(frame)
+    except PanelScrolledError:
+        return "panel scrolled"
+    if not reading.ok:
+        return "slider unclear"
+    return " ".join(str(v) for v in reading.values)
+
+
+def new_clips(recordings: Path, features: Path) -> list:
+    """(head folder name or None, video) for each clip not yet extracted."""
+    clips = [(None, video) for video in sorted(recordings.glob("*.mp4"))]
+    for _, folder in head_folders(recordings):
+        for video in sorted(folder.glob("*.mp4")):
+            if not (features / folder.name / (video.stem + ".npz")).exists():
+                clips.append((folder.name, video))
+    return clips
+
+
+def check(folder: str | None, video: Path) -> bool:
+    """Print one line on the clip and return whether it passes."""
+    cap = cv2.VideoCapture(str(video))
+    frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    seconds = frames / cap.get(cv2.CAP_PROP_FPS)
+    start = sliders_at(cap, EDGE_FRAMES)
+    middle = sliders_at(cap, frames // 2)
+    end = sliders_at(cap, max(frames - EDGE_FRAMES, 0))
+    cap.release()
+
+    issues = []
+    if folder is None:
+        folder = "no head folder"
+        issues.append("not in a head folder")
+    if seconds < MIN_SECONDS:
+        issues.append("shorter than one idle loop")
+    if not (start == middle == end):
+        issues.append("sliders change")
+    for reading in (start, middle, end):
+        if not reading[0].isdigit():
+            issues.append(reading)
+            break
+    if issues:
+        verdict = "PROBLEM: " + ", ".join(issues)
+    else:
+        verdict = "ok"
+    print(f"{folder} | {video.name} | {seconds:5.1f} s | {start} | {middle} | {end} | {verdict}")
+    return not issues
 
 
 def extract(video: Path, out: Path) -> str:
@@ -89,6 +163,7 @@ def extract(video: Path, out: Path) -> str:
         landmarks.close()
 
     arrays = {key: np.array(value) for key, value in rows.items()}
+    out.parent.mkdir(parents=True, exist_ok=True)
     np.savez(out, fps=fps, slider_names=np.array(SLIDER_NAMES), **arrays)
     seconds = time.perf_counter() - start
     return f"{frame_no} frames, {1000 * seconds / frame_no:.1f} ms per frame, face in {arrays['face'].sum()}"
@@ -97,23 +172,20 @@ def extract(video: Path, out: Path) -> str:
 def main():
     recordings = Path(sys.argv[1])
     features = Path(sys.argv[2])
-    loose = list(recordings.glob("*.mp4"))
-    if loose:
-        print(f"{len(loose)} clips sit outside a head folder and are skipped")
+    clips = new_clips(recordings, features)
+    print(f"{len(clips)} new clips")
 
     jobs = []
-    cached = 0
-    for _, folder in head_folders(recordings):
-        for video in sorted(folder.glob("*.mp4")):
-            out = features / folder.name / (video.stem + ".npz")
-            if out.exists():
-                cached += 1
-                continue
-            out.parent.mkdir(parents=True, exist_ok=True)
-            jobs.append((video, out))
-    print(f"{len(jobs)} clips to extract, {cached} already cached")
+    problems = 0
+    for folder, video in clips:
+        if check(folder, video):
+            jobs.append((video, features / folder / (video.stem + ".npz")))
+        else:
+            problems += 1
+    if problems:
+        print(f"{problems} clips with a problem are skipped")
+    print(f"{len(jobs)} clips to extract")
 
-    rejected = 0
     with ProcessPoolExecutor(max_workers=WORKERS) as pool:
         futures = {pool.submit(extract, video, out): video for video, out in jobs}
         for future in as_completed(futures):
@@ -123,8 +195,8 @@ def main():
                 print(f"{label}: {future.result()}")
             except PanelScrolledError as e:
                 print(f"{label}: rejected: {e}")
-                rejected += 1
-    if rejected:
+                problems += 1
+    if problems:
         sys.exit(1)
 
 
