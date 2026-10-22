@@ -16,7 +16,7 @@ Propose only offline analysis of recordings. The user records with the NVIDIA ap
 
 - Clips go in `C:/Users/LexSong/Videos/NVIDIA/Tom Clancy's The Division 2/HeadNN/`. The game window is 16:9 and clips are 1280x720, 60 fps. 4K files were too large, and 720p reads the same.
 - One fixed slider setting per clip. The sliders must not move during a clip.
-- Do not steer the head with the mouse. A steered clip gave worse cleaning directions than a plain idle clip.
+- Do not steer the head with the mouse. A steered clip gave worse idle animation axes than a plain idle clip.
 - The idle animation loops every ~17.5 s, so a clip needs at least one full loop.
 - The slider panel must not scroll, or the clip is rejected. So Jawline is not read.
 - Heads 07, 12, 14 and 15 are skipped.
@@ -36,7 +36,7 @@ Recording time is the user's main cost, so sweep only the 3-4 heads that rank hi
 
 - Measure faces with ArcFace (buffalo_l w600k_r50). MediaPipe 3D points and 3DDFA_V2 followed the sliders 3-5x worse, so do not propose them again. MediaPipe stays only for head yaw and pitch.
 - Keep frames with |yaw| <= 25 degrees. Far from the resting pose, ArcFace changes with the angle.
-- Clean each head with its own animation directions. Learn them on clips that are not scored, or the noise estimate is circular.
+- Remove each head's idle animation with its own idle animation axes. Learn them on clips that are not scored, or the noise estimate is circular.
 - Sessions drift: the same head moved 0.05-0.09 between sessions, 2-7x the in-clip noise. So never fit a clip against a control from another session.
 - Fit one local model per head and refine it with new clips. The user rejected one global least-squares fit.
 - Judge any change to the frame or clip rules by how well the kept frames agree.

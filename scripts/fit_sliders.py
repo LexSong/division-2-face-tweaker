@@ -46,14 +46,14 @@ YAW_LIMIT = 25.0
 
 # A clip's average stands for whole idle loops, and frames with unread sliders
 # tend to come in runs, so a clip that loses many would average over only parts
-# of the loop. Clean clips read 100% of frames, and a cursor over the panel
+# of the loop. Clips without problems read 100% of frames, and a cursor over the panel
 # costs a few. A knob lost to compression once cost 75%.
 MIN_SLIDERS_READ = 0.95
 
-# Animation axes removed from every vector before comparing. A head's first 30
-# axes hold about 87% of its animation, and removing more risks removing what
-# makes the target recognizable.
-CLEAN_DIRECTIONS = 30
+# Idle animation axes removed from every vector before comparing. A head's
+# first 30 axes hold about 87% of its idle animation, and removing more risks
+# removing what makes the target recognizable.
+IDLE_ANIMATION_AXES = 30
 
 
 @dataclass
@@ -88,14 +88,6 @@ def load_feature_folder(folder: Path) -> list:
     return samples
 
 
-def control_frames(samples: list) -> np.ndarray:
-    """ArcFace of the samples with every slider at 6, pooled."""
-    frames = [s.arcface for s in samples if (s.sliders == SLIDER_CENTER).all()]
-    if not frames:
-        raise ValueError("no control clip")
-    return np.concatenate(frames)
-
-
 def target_vector(photos: list) -> np.ndarray:
     """Average ArcFace vector of the photos."""
     landmarks = Landmarks()
@@ -113,13 +105,24 @@ def target_vector(photos: list) -> np.ndarray:
     return np.mean(vectors, axis=0)
 
 
-def animation_directions(frames: np.ndarray, count: int) -> np.ndarray:
-    """The main axes of the animation's spread in ArcFace, as rows, from a PCA
-    of one head's control frames. The animation is the same for every head,
-    but these axes are not: a head's own 60 axes capture 92% of its animation,
-    while 60 axes from the other heads capture 46%."""
+def idle_animation_axes(samples: list) -> np.ndarray:
+    """The main axes of the idle animation's spread in ArcFace, as rows, from
+    a PCA of the frames of the samples with every slider at 6. The idle
+    animation is the same for every head, but these axes are not: a head's own
+    60 axes capture 92% of its idle animation, while 60 axes from the other
+    heads capture 46%."""
+    controls = [s.arcface for s in samples if (s.sliders == SLIDER_CENTER).all()]
+    if not controls:
+        raise ValueError("no idle control clips")
+    frames = np.concatenate(controls)
     _, _, vt = np.linalg.svd(frames - frames.mean(0), full_matrices=False)
-    return vt[:count]
+    return vt[:IDLE_ANIMATION_AXES]
+
+
+def remove_axes(array: np.ndarray, axes: np.ndarray) -> np.ndarray:
+    """array with its parts along the axes removed, per row. The axes are
+    orthonormal rows."""
+    return array - (array @ axes.T) @ axes
 
 
 def design(values: np.ndarray, curved: np.ndarray) -> np.ndarray:
@@ -139,14 +142,14 @@ def main():
     photos = sys.argv[3:]
 
     samples = load_feature_folder(features / f"Head{head:02d}")
-    directions = animation_directions(control_frames(samples), CLEAN_DIRECTIONS)
+    idle_axes = idle_animation_axes(samples)
 
-    def clean(x):
-        return x - (x @ directions.T) @ directions
+    def remove_idle_animation(array):
+        return remove_axes(array, idle_axes)
 
-    target = clean(target_vector(photos))
+    target = remove_idle_animation(target_vector(photos))
     values = np.array([c.sliders for c in samples])
-    means = np.array([clean(c.arcface.mean(0)) for c in samples])
+    means = remove_idle_animation(np.array([c.arcface.mean(0) for c in samples]))
 
     print(f"{len(samples)} clips for head {head}, {len(photos)} target photo(s)")
     print("Measured similarity to the target, per clip:")
