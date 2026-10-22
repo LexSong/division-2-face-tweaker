@@ -15,7 +15,7 @@ from pathlib import Path
 
 import cv2
 
-from face_tweaker.division2_sliders import panel_in_place
+from face_tweaker.division2_sliders import PanelScrolledError
 from face_tweaker.division2_sliders import read_sliders
 from face_tweaker.layout import head_folders
 
@@ -33,9 +33,10 @@ def sliders_at(cap: cv2.VideoCapture, frame_no: int) -> str:
     ok, frame = cap.read()
     if not ok:
         return "unreadable frame"
-    if not panel_in_place(frame):
+    try:
+        reading = read_sliders(frame)
+    except PanelScrolledError:
         return "panel scrolled"
-    reading = read_sliders(frame)
     if not reading.ok:
         return "slider unclear"
     return " ".join(str(v) for v in reading.values)

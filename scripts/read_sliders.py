@@ -43,7 +43,7 @@ def main():
         vals = " ".join(cells)
         print(
             f"frames {start:5d}-{i - 1:5d} ({len(run):4d})  [{vals}]"
-            f"  selected {sel_name:<12} worst {worst:4.1f} px  bad {bad}"
+            f"  selected {sel_name:<12} worst {worst:4.2f} tick  bad {bad}"
         )
         start = i
 
