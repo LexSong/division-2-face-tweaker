@@ -1,11 +1,14 @@
 """Suggest slider values that make one head look like the target photos.
 
 All clips in the head's feature folder are data points: the control clip with
-every slider at 6, and clips with sliders moved. Each clip gives one point,
-its ArcFace average over good frames (see face_tweaker.clips). A local
-model then predicts ArcFace from the sliders. Per slider it has a slope, plus
-a curvature where that slider was recorded at 3 or more values, and the
-sliders are assumed to add up.
+every slider at 6, and clips with sliders moved. Each clip has one features
+file of per-frame measurements, written by scripts/extract_features.py. A
+frame is good when its sliders were read and its face counts for ArcFace. A
+clip counts when its sliders stay the same over its good frames, and clip
+names do not matter. Each clip that counts gives one point, its ArcFace
+average over good frames. A local model then predicts ArcFace from the
+sliders. Per slider it has a slope, plus a curvature where that slider was
+recorded at 3 or more values, and the sliders are assumed to add up.
 
 The suggestion maximizes the cosine similarity between the predicted ArcFace
 and the target's, over each slider's full 0-12 range. Beyond the values
@@ -13,19 +16,20 @@ recorded for a slider, the model extrapolates, so those suggestions are
 marked. Record the suggestion as a new clip in the same head folder: the next
 run fits it in, which measures the model exactly where it was guessing.
 
-The head needs a control clip (see face_tweaker.clips).
+The head needs a control clip: every slider at 6, recorded with the mouse
+untouched. In it the face is fixed, so every change in ArcFace comes from the
+idle animation.
 
 Usage: uv run scripts/fit_sliders.py <features_dir> <head> <photo>...
 """
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from face_tweaker.clips import control_frames
-from face_tweaker.clips import load_feature_folder
 from face_tweaker.division2_sliders import SLIDER_CENTER
 from face_tweaker.division2_sliders import SLIDER_MAX
 from face_tweaker.division2_sliders import SLIDER_MIN
@@ -33,10 +37,63 @@ from face_tweaker.division2_sliders import SLIDER_NAMES
 from face_tweaker.face_features import ArcFace
 from face_tweaker.face_features import Landmarks
 
+# Frames with MediaPipe yaw beyond this are left out. Within about 10 degrees
+# of the resting pose ArcFace barely moves, but past -20 degrees it drifts
+# fast, down to a cosine of about 0.72 at the idle loop's turn to -40 degrees.
+# On the control clips, limits from 15 to 30 degrees all give the steadiest
+# clip averages, and 25 keeps 84% of frames.
+YAW_LIMIT = 25.0
+
+# A clip's average stands for whole idle loops, and frames with unread sliders
+# tend to come in runs, so a clip that loses many would average over only parts
+# of the loop. Clean clips read 100% of frames, and a cursor over the panel
+# costs a few. A knob lost to compression once cost 75%.
+MIN_SLIDERS_READ = 0.95
+
 # Animation axes removed from every vector before comparing. A head's first 30
 # axes hold about 87% of its animation, and removing more risks removing what
 # makes the target recognizable.
 CLEAN_DIRECTIONS = 30
+
+
+@dataclass
+class SliderFeatures:
+    """One slider setting and the features measured at it."""
+
+    sliders: np.ndarray  # slider values, the same in every good frame
+    arcface: np.ndarray  # ArcFace of the good frames
+
+
+def good_frames(d) -> np.ndarray:
+    """Mask of the good frames in one clip's features: sliders read, and a
+    face found turned no more than YAW_LIMIT."""
+    return d["ok"] & d["face"] & (np.abs(d["yaw"]) <= YAW_LIMIT)
+
+
+def load_feature_folder(folder: Path) -> list:
+    """One SliderFeatures per clip in folder that counts."""
+    samples = []
+    for path in sorted(folder.glob("*.npz")):
+        d = np.load(path)
+        read = d["ok"].mean()
+        if read < MIN_SLIDERS_READ:
+            print(f"skipped {path.stem}: sliders read in only {read:.0%} of frames")
+            continue
+        good = good_frames(d)
+        values = np.unique(d["sliders"][good], axis=0)
+        if len(values) != 1:
+            print(f"skipped {path.stem}: its sliders change during the clip")
+            continue
+        samples.append(SliderFeatures(values[0], d["arcface"][good].astype(np.float64)))
+    return samples
+
+
+def control_frames(samples: list) -> np.ndarray:
+    """ArcFace of the samples with every slider at 6, pooled."""
+    frames = [s.arcface for s in samples if (s.sliders == SLIDER_CENTER).all()]
+    if not frames:
+        raise ValueError("no control clip")
+    return np.concatenate(frames)
 
 
 def target_vector(photos: list) -> np.ndarray:
@@ -98,7 +155,7 @@ def main():
         label = ", ".join(moved)
         if not label:
             label = "all at 6"
-        print(f"  {cosine(m, target):+.3f}  {label:<20} {c.feature_file.stem[-11:]}")
+        print(f"  {cosine(m, target):+.3f}  {label}")
 
     # A curvature term needs the slider recorded at 3 or more values.
     curved = np.array([len(np.unique(values[:, s])) >= 3 for s in range(values.shape[1])])
