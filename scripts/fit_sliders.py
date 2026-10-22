@@ -90,18 +90,20 @@ def load_feature_folder(folder: Path) -> list:
 
 def target_vector(photos: list) -> np.ndarray:
     """Average ArcFace vector of the photos."""
-    landmarks = Landmarks()
     arcface = ArcFace()
     vectors = []
     for photo in photos:
         image = cv2.imread(str(photo))
         if image is None:
             raise ValueError(f"cannot read {photo}")
+        # Landmarks runs in video mode, which tracks the face from the previous
+        # frame, so each photo gets its own.
+        landmarks = Landmarks()
         found = landmarks.detect(image, 0)
+        landmarks.close()
         if found is None:
             raise ValueError(f"no face in {photo}")
         vectors.append(arcface.embed(image, found[0]))
-    landmarks.close()
     return np.mean(vectors, axis=0)
 
 
