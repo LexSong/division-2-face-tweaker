@@ -5,9 +5,12 @@ Per frame this stores the slider values read from the panel, the ArcFace
 embedding, and the head yaw and pitch from MediaPipe. Later steps then run on
 these files in seconds instead of decoding video.
 
-Clips live in head folders (see face_tweaker.layout). A new clip is one
-without a cache file, or one sitting outside a head folder. Earlier
-extractions are reused.
+Recordings sit in one folder per head type, named Head00 to Head19, under
+the NVIDIA app's folder for the game. The folder name gives the head type, so
+clips keep the names the NVIDIA app gives them. The feature cache mirrors that:
+<features>/HeadNN/<clip name>.npz. A new clip is one in a head folder without
+a cache file. Earlier extractions are reused. A clip left outside the head
+folders gets a warning, so it can be moved into one.
 
 The check comes first and reads three frames per clip, so it reports in
 seconds, before minutes of extraction. It prints each clip's length and the
@@ -39,7 +42,9 @@ from face_tweaker.division2_sliders import PanelScrolledError
 from face_tweaker.division2_sliders import read_sliders
 from face_tweaker.face_features import ArcFace
 from face_tweaker.face_features import Landmarks
-from face_tweaker.layout import head_folders
+
+# Clips in the head folders, named HeadNN, relative to the recordings folder.
+HEAD_CLIPS = "Head[0-9][0-9]/*.mp4"
 
 # Clips extracted at once. One process takes about 30 ms per frame, and four in
 # parallel take about 43 ms each, so four give about 2.8 times the throughput.
@@ -68,17 +73,23 @@ def sliders_at(cap: cv2.VideoCapture, frame_no: int) -> str:
     return " ".join(str(v) for v in reading.values)
 
 
+def warn_misplaced(recordings: Path):
+    """Print each clip that sits outside the head folders."""
+    for video in sorted(recordings.glob("*.mp4")):
+        print(f"warning: {video.name} is not in a head folder, so it is not extracted")
+
+
 def new_clips(recordings: Path, features: Path) -> list:
-    """(head folder name or None, video) for each clip not yet extracted."""
-    clips = [(None, video) for video in sorted(recordings.glob("*.mp4"))]
-    for _, folder in head_folders(recordings):
-        for video in sorted(folder.glob("*.mp4")):
-            if not (features / folder.name / (video.stem + ".npz")).exists():
-                clips.append((folder.name, video))
+    """(head folder name, video) for each clip not yet extracted."""
+    clips = []
+    for video in sorted(recordings.glob(HEAD_CLIPS)):
+        folder = video.parent.name
+        if not (features / folder / (video.stem + ".npz")).exists():
+            clips.append((folder, video))
     return clips
 
 
-def check(folder: str | None, video: Path) -> bool:
+def check(folder: str, video: Path) -> bool:
     """Print one line on the clip and return whether it passes."""
     cap = cv2.VideoCapture(str(video))
     frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -89,9 +100,6 @@ def check(folder: str | None, video: Path) -> bool:
     cap.release()
 
     issues = []
-    if folder is None:
-        folder = "no head folder"
-        issues.append("not in a head folder")
     if seconds < MIN_SECONDS:
         issues.append("shorter than one idle loop")
     if not (start == middle == end):
@@ -172,6 +180,7 @@ def extract(video: Path, out: Path) -> str:
 def main():
     recordings = Path(sys.argv[1])
     features = Path(sys.argv[2])
+    warn_misplaced(recordings)
     clips = new_clips(recordings, features)
     print(f"{len(clips)} new clips")
 
