@@ -36,11 +36,12 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from bareface.arcface import ArcFace
 
 from face_tweaker.division2_sliders import SLIDER_NAMES
 from face_tweaker.division2_sliders import PanelScrolledError
 from face_tweaker.division2_sliders import read_sliders
-from face_tweaker.face_features import ArcFace
+from face_tweaker.face_features import FIVE_POINTS
 from face_tweaker.face_features import Landmarks
 
 # Clips in the head folders, named HeadNN, relative to the recordings folder.
@@ -162,7 +163,7 @@ def extract(video: Path, out: Path) -> str:
             else:
                 points, yaw, pitch = found
                 rows["face"].append(True)
-                rows["arcface"].append(arcface.embed(frame, points))
+                rows["arcface"].append(arcface.embed(frame, points[FIVE_POINTS, :2]))
                 rows["yaw"].append(yaw)
                 rows["pitch"].append(pitch)
             frame_no += 1

@@ -29,12 +29,13 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from bareface.arcface import ArcFace
 
 from face_tweaker.division2_sliders import SLIDER_CENTER
 from face_tweaker.division2_sliders import SLIDER_MAX
 from face_tweaker.division2_sliders import SLIDER_MIN
 from face_tweaker.division2_sliders import SLIDER_NAMES
-from face_tweaker.face_features import ArcFace
+from face_tweaker.face_features import FIVE_POINTS
 from face_tweaker.face_features import Landmarks
 
 # Frames with MediaPipe yaw beyond this are left out. Within about 10 degrees
@@ -103,7 +104,7 @@ def target_vector(photos: list) -> np.ndarray:
         landmarks.close()
         if found is None:
             raise ValueError(f"no face in {photo}")
-        vectors.append(arcface.embed(image, found[0]))
+        vectors.append(arcface.embed(image, found[0][FIVE_POINTS, :2]))
     return np.mean(vectors, axis=0)
 
 
